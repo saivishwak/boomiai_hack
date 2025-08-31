@@ -141,14 +141,22 @@ The system leverages the AutoAgents framework for:
 
 ## Usage Commands
 
-### Terminal 1: Start cluster host
+#### Terminal 1: Start cluster host
+```sh
 cargo run -- host -p 9000
+```
 
-### Terminal 2: Start camera agent
+#### Terminal 2: Start camera agent
+```sh
 cargo run -- camera -p 9003 --host-addr localhost:9000
+```
 
-### Terminal 3: Start analysis agent (if needed)
+#### Terminal 3: Start analysis agent (if needed)
+```sh
 cargo run -- analysis -p 9002 --host-addr localhost:9000
+```
 
-### Terminal 4: Start doctor with GUI
+#### Terminal 4: Start doctor with GUI
+```sh
 cargo run -- doctor -p 9001 --host-addr localhost:9000
+```
