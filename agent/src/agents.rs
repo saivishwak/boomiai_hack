@@ -327,6 +327,7 @@ impl AgentExecutor for CameraAgent {
     You can:
     - Ask Analysis Agent to analyze ECG data using the ecg_analysis tool
     - Interpret analysis results and provide medical recommendations
+    - You can check the patient room using the camerate tool to answer questions about the asked query
     - Respond directly to users with analysis findings
 
     ## CRITICAL LOOP PREVENTION LOGIC
