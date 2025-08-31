@@ -144,8 +144,6 @@ impl ToolRuntime for CameraAnalysisTool {
     name = "camera_agent",
     description = "You are a Camera Analysis Agent that can capture and analyze images. When you receive a query, you should:
     2. Analyze the image based on the specific query received
-    3. Provide detailed medical observations and findings
-    4. Focus on any medical devices, conditions, or relevant visual information
 
     Always be thorough in your visual analysis and provide clear response."
 )]
