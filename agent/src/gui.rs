@@ -306,7 +306,7 @@ impl ChatApp {
 
         let header = container(
             row![
-                text("ECG Doctor Chat").size(20).color(text_primary),
+                text("LiquidOS AI").size(20).color(text_primary),
                 iced::widget::Space::with_width(Length::Fill),
                 text("Online").size(14).color(accent_green)
             ]
