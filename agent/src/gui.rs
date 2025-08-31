@@ -50,7 +50,6 @@ impl ChatApp {
                 self.input_value = value;
             }
             Message::SendMessage => {
-                println!("🔥 DEBUG: SendMessage triggered with input: '{}'", self.input_value);
                 if !self.input_value.trim().is_empty() {
                     let content = self.input_value.clone();
 
@@ -62,9 +61,7 @@ impl ChatApp {
 
                     // Send message to doctor agent with USER_SEND prefix to identify actual send events
                     if let Some(sender) = self.user_sender.lock().unwrap().as_ref() {
-                        println!("🚀 DEBUG: About to send to channel: USER_SEND:{}", content);
                         let _ = sender.send(format!("USER_SEND:{}", content));
-                        println!("✅ DEBUG: Successfully sent to channel");
                     }
 
                     self.input_value.clear();

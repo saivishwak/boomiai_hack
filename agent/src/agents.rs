@@ -16,8 +16,11 @@ use autoagents_derive::{ToolInput, agent, tool};
 use colored::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
+use std::fs;
+use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, sleep};
 use tokio_stream::{StreamExt, wrappers::ReceiverStream};
@@ -81,6 +84,212 @@ impl ToolRuntime for PublishTopicToAnalysis {
     }
 }
 
+// Tool for doctor to request camera analysis
+#[derive(Serialize, Deserialize, ToolInput, Debug)]
+pub struct CameraAnalysisArgs {
+    #[input(description = "The specific query or analysis request for the camera image")]
+    query: String,
+}
+
+#[tool(
+    name = "camera_analysis",
+    description = "Request camera to capture and analyze an image for medical purposes",
+    input = CameraAnalysisArgs,
+)]
+struct CameraAnalysisTool {}
+
+#[async_trait]
+impl ToolRuntime for CameraAnalysisTool {
+    async fn execute(&self, context: &Context, args: Value) -> Result<Value, ToolCallError> {
+        println!("📷 Tool call to request camera analysis");
+        let typed_args: CameraAnalysisArgs = serde_json::from_value(args)?;
+        let camera_topic = Topic::<Task>::new("camera_requests");
+
+        println!(
+            "🚀 Publishing camera analysis request: {}",
+            typed_args.query
+        );
+
+        let task = Task::new(typed_args.query.clone());
+        println!("📦 Created camera analysis task: {:?}", task);
+
+        println!("🔧 About to publish via context.publish() to cluster...");
+        match context.publish(camera_topic.clone(), task).await {
+            Ok(_) => {
+                println!(
+                    "✅ Successfully published camera analysis request to topic: {:?}",
+                    camera_topic
+                );
+                Ok(serde_json::to_value(format!(
+                    "Camera analysis request submitted: {}",
+                    typed_args.query
+                ))
+                .unwrap())
+            }
+            Err(e) => {
+                eprintln!(
+                    "❌ Failed to publish camera analysis request on topic {:?}: {}",
+                    camera_topic, e
+                );
+                Err(ToolCallError::from(
+                    Box::new(e) as Box<dyn std::error::Error + Send + Sync>
+                ))
+            }
+        }
+    }
+}
+
+// Camera agent for image analysis
+#[agent(
+    name = "camera_agent",
+    description = "You are a Camera Analysis Agent that can capture and analyze images for medical purposes. When you receive a query, you should:
+    1. Capture an image using the available camera
+    2. Analyze the image based on the specific query received
+    3. Provide detailed medical observations and findings
+    4. Focus on any medical devices, conditions, or relevant visual information
+
+    Always be thorough in your visual analysis and provide clear, medical-relevant descriptions."
+)]
+#[derive(Clone)]
+pub struct CameraAgent {}
+
+// Custom executor implementation for camera agent
+#[async_trait]
+impl AgentExecutor for CameraAgent {
+    type Output = String;
+    type Error = Error;
+
+    fn config(&self) -> ExecutorConfig {
+        ExecutorConfig::default()
+    }
+
+    async fn execute(&self, task: &Task, context: Arc<Context>) -> Result<String, Error> {
+        let query = task.prompt.clone();
+
+        println!("📷 CameraAgent received query: {}", query);
+
+        // Create images directory if it doesn't exist
+        let images_dir = "captured_images";
+        if !std::path::Path::new(images_dir).exists() {
+            std::fs::create_dir(images_dir).unwrap_or_else(|e| {
+                eprintln!("Failed to create images directory: {}", e);
+            });
+        }
+
+        // Generate unique filename with timestamp
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let output_path = format!("{}/medical_image_{}.jpg", images_dir, timestamp);
+
+        println!("📷 Attempting to capture image...");
+
+        let mut capture_success = false;
+
+        // Try imagesnap first (most reliable on macOS)
+        let imagesnap_result = Command::new("imagesnap")
+            .arg("-q") // Quiet mode
+            .arg(&output_path)
+            .output();
+
+        match imagesnap_result {
+            Ok(result) => {
+                if result.status.success() && fs::metadata(&output_path).is_ok() {
+                    println!("✅ Captured image with ImageSnap");
+                    capture_success = true;
+                } else {
+                    println!("❌ ImageSnap failed, trying FFmpeg...");
+                }
+            }
+            Err(_) => {
+                println!("❌ ImageSnap not available, trying FFmpeg...");
+            }
+        }
+
+        // Fallback: Try using ffmpeg if imagesnap failed
+        if !capture_success {
+            let ffmpeg_result = Command::new("ffmpeg")
+                .args(&[
+                    "-f",
+                    "avfoundation",
+                    "-video_size",
+                    "640x480",
+                    "-framerate",
+                    "30",
+                    "-i",
+                    "0", // Default camera
+                    "-vframes",
+                    "1",  // Capture only 1 frame
+                    "-y", // Overwrite output file
+                    &output_path,
+                ])
+                .output();
+
+            match ffmpeg_result {
+                Ok(result) => {
+                    if result.status.success() && fs::metadata(&output_path).is_ok() {
+                        println!("✅ Captured image with FFmpeg");
+                        capture_success = true;
+                    } else {
+                        println!("❌ FFmpeg failed");
+                    }
+                }
+                Err(_) => {
+                    println!("❌ FFmpeg not available");
+                }
+            }
+        }
+
+        if !capture_success {
+            // Return error result if capture failed
+            return Ok("Camera capture failed - no image analysis available".to_string());
+        }
+
+        // Read the captured image into a buffer
+        let image_buffer = match fs::read(&output_path) {
+            Ok(buffer) => {
+                println!("📖 Image loaded successfully ({} KB)", buffer.len() / 1024);
+                buffer
+            }
+            Err(e) => {
+                println!("❌ Failed to read image file: {}", e);
+                return Ok("Image file could not be read".to_string());
+            }
+        };
+
+        println!("🤖 Sending image to AI for analysis...");
+
+        // Create chat messages for LLM
+        let messages = vec![
+            ChatMessage {
+                role: ChatRole::System,
+                message_type: MessageType::Text,
+                content: "You are a medical camera analysis agent. Analyze the provided image and respond with detailed medical assessment. Focus on any medical devices, conditions, or relevant visual information.".to_string(),
+            },
+            ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Image((autoagents::llm::chat::ImageMime::JPEG, image_buffer)),
+                content: format!("Please analyze this medical image and respond to this query: {}. Provide detailed findings.", query),
+            },
+        ];
+
+        // Call LLM directly with chat messages
+        match context.llm().chat(&messages, None, None).await {
+            Ok(response) => {
+                println!("✅ AI analysis completed");
+                let response_text = response.to_string();
+                println!("📋 Camera Analysis Result: {}", response_text);
+                Ok(response_text)
+            }
+            Err(e) => {
+                println!("❌ LLM analysis failed: {}", e);
+                Ok(format!("AI analysis failed: {}", e))
+            }
+        }
+    }
+}
+
 #[agent(
     name = "doctor_agent",
     description = "You are an expert ECG Doctor Agent using the ReAct (Reasoning + Acting) execution pattern. Your primary role is to help answer user queries about ECG analysis through systematic reasoning and tool usage.
@@ -113,7 +322,7 @@ impl ToolRuntime for PublishTopicToAnalysis {
     For ANALYSIS RESPONSES: Skip tools, respond directly to user.
 
     Remember: Distinguish between new user queries (use tools) and analysis responses (respond directly).",
-    tools = [PublishTopicToAnalysis],
+    tools = [PublishTopicToAnalysis, CameraAnalysisTool],
 )]
 #[derive(Clone)]
 pub struct DoctorAgent {}
@@ -282,15 +491,18 @@ pub async fn run_doctor_agent(
     tokio::spawn(async move {
         while let Some(message) = user_rx.recv().await {
             println!("📋 Received user message: {}", message);
-            
+
             // Only process messages that start with "USER_SEND:" to identify actual send events
             if message.starts_with("USER_SEND:") {
                 let actual_message = message.strip_prefix("USER_SEND:").unwrap_or(&message);
                 println!("✉️ Processing user send event directly: {}", actual_message);
-                
+
                 // Use regular publish - we'll handle deduplication at the agent level
                 if let Err(e) = runtime_clone
-                    .publish(&user_messages_topic_clone, Task::new(actual_message.to_string()))
+                    .publish(
+                        &user_messages_topic_clone,
+                        Task::new(actual_message.to_string()),
+                    )
                     .await
                 {
                     eprintln!("Failed to publish user message: {}", e);
@@ -383,6 +595,84 @@ pub async fn run_analysis_agent(
         .await
         .expect("Failed to listen for Ctrl+C");
     println!("🧠 Shutting down AnalysisAgent...");
+    if let Err(e) = runtime.stop().await {
+        eprintln!("Error stopping runtime: {}", e);
+    }
+
+    Ok(())
+}
+
+pub async fn run_camera_agent(
+    llm: Arc<OpenAI>,
+    node_name: String,
+    port: u16,
+    host_addr: String,
+    host: String,
+) -> Result<(), Error> {
+    println!(
+        "📷 Initializing CameraAgent cluster client on port {}",
+        port
+    );
+
+    let sliding_window_memory = Box::new(SlidingWindowMemory::new(10));
+    let camera_topic = Topic::<Task>::new("camera_requests");
+
+    // Create cluster client runtime for CameraAgent - it will connect to dedicated cluster host
+    let runtime = ClusterClientRuntime::new(
+        "camera_client".to_string(),
+        host_addr.clone(),
+        node_name,
+        "cluster-cookie".to_string(),
+        port,
+        host,
+    );
+
+    println!("📷 Creating CameraAgent instance...");
+    let camera_agent = CameraAgent {};
+
+    // Create and initialize agent
+    let _agent_instance = AgentBuilder::new(camera_agent)
+        .with_llm(llm)
+        .runtime(runtime.clone())
+        .subscribe_topic(camera_topic.clone())
+        .with_memory(sliding_window_memory)
+        .build()
+        .await?;
+
+    // Create environment and set up event handling
+    let mut environment = Environment::new(None);
+    let _ = environment.register_runtime(runtime.clone()).await;
+
+    let receiver = environment.take_event_receiver(None).await?;
+    let (_dummy_tx, _) = mpsc::unbounded_channel::<String>();
+
+    // Use the regular handle_events function for camera responses
+    let (camera_response_tx, _) = mpsc::unbounded_channel::<String>();
+    println!("📷 Setting up CameraAgent event handler...");
+    handle_events(receiver, camera_response_tx, runtime.clone(), false);
+
+    // Spawn environment runner in background
+    let _env_handle = tokio::spawn(async move {
+        if let Err(e) = environment.run().await {
+            eprintln!("Environment error: {}", e);
+        }
+    });
+
+    println!(
+        "🌐 ClusterClientRuntime will connect to cluster host at {}",
+        host_addr
+    );
+
+    println!("📷 CameraAgent ready to analyze images for medical queries...");
+    println!("📷 CameraAgent subscribed to topic: camera_requests");
+    println!("📷 CameraAgent runtime: {:?}", runtime);
+    println!("📷 Camera capture methods: ImageSnap (primary), FFmpeg (fallback)");
+
+    // Keep running until Ctrl+C
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Failed to listen for Ctrl+C");
+    println!("📷 Shutting down CameraAgent...");
     if let Err(e) = runtime.stop().await {
         eprintln!("Error stopping runtime: {}", e);
     }

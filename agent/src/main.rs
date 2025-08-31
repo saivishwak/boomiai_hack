@@ -57,6 +57,21 @@ enum Commands {
         #[arg(long, default_value = "localhost")]
         host: String,
     },
+    /// Run CameraAgent as cluster client
+    Camera {
+        /// Port for this node
+        #[arg(short = 'p', long, default_value = "9003")]
+        port: u16,
+        /// Cluster host address to connect to (e.g., localhost:9000)
+        #[arg(long, default_value = "localhost:9000")]
+        host_addr: String,
+        /// Node name
+        #[arg(short = 'n', long, default_value = "camera")]
+        name: String,
+        /// Local host address
+        #[arg(long, default_value = "localhost")]
+        host: String,
+    },
 }
 
 #[tokio::main]
@@ -131,6 +146,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 port, name
             );
             agents::run_analysis_agent(llm, name, port, host_addr, host).await?;
+        }
+        Commands::Camera {
+            port,
+            host_addr,
+            name,
+            host,
+        } => {
+            println!(
+                "📷 Starting CameraAgent on port {} with name {}",
+                port, name
+            );
+            agents::run_camera_agent(llm, name, port, host_addr, host).await?;
         }
     }
     Ok(())
