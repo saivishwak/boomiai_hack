@@ -264,12 +264,18 @@ impl AgentExecutor for CameraAgent {
             ChatMessage {
                 role: ChatRole::System,
                 message_type: MessageType::Text,
-                content: "You are a medical camera analysis agent. Analyze the provided image and respond with detailed medical assessment. Focus on any medical devices, conditions, or relevant visual information.".to_string(),
+                content: self.description().to_string(),
             },
             ChatMessage {
                 role: ChatRole::User,
-                message_type: MessageType::Image((autoagents::llm::chat::ImageMime::JPEG, image_buffer)),
-                content: format!("Please analyze this medical image and respond to this query: {}. Provide detailed findings.", query),
+                message_type: MessageType::Image((
+                    autoagents::llm::chat::ImageMime::JPEG,
+                    image_buffer,
+                )),
+                content: format!(
+                    "Please analyze this medical image and respond to this query: {}. Provide detailed findings.",
+                    query
+                ),
             },
         ];
 
