@@ -280,11 +280,33 @@ impl AgentExecutor for CameraAgent {
                 println!("✅ AI analysis completed");
                 let response_text = response.to_string();
                 println!("📋 Camera Analysis Result: {}", response_text);
+                
+                // Publish the camera analysis result back to the doctor
+                let camera_response_topic = Topic::<Task>::new("camera_response");
+                let response_task = Task::new(format!("### Camera Analysis Result\n{}", response_text));
+                
+                match context.publish(camera_response_topic.clone(), response_task).await {
+                    Ok(_) => {
+                        println!("✅ Successfully published camera analysis to doctor topic: {:?}", camera_response_topic);
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Failed to publish camera analysis to doctor: {}", e);
+                    }
+                }
+                
                 Ok(response_text)
             }
             Err(e) => {
                 println!("❌ LLM analysis failed: {}", e);
-                Ok(format!("AI analysis failed: {}", e))
+                let error_msg = format!("AI analysis failed: {}", e);
+                
+                // Publish the error back to the doctor as well
+                let camera_response_topic = Topic::<Task>::new("camera_response");
+                let error_task = Task::new(format!("### Camera Analysis Error\n{}", error_msg));
+                
+                let _ = context.publish(camera_response_topic, error_task).await;
+                
+                Ok(error_msg)
             }
         }
     }
@@ -455,14 +477,16 @@ pub async fn run_doctor_agent(
         .runtime(runtime.clone())
         .subscribe_topic(user_messages_topic.clone()) // "user_messages" topic for GUI user queries
         .subscribe_topic(Topic::<Task>::new("analysis_response")) // "analysis_response" topic for analysis results
+        .subscribe_topic(Topic::<Task>::new("camera_response")) // "camera_response" topic for camera analysis results
         // DO NOT subscribe to "analysis_agent" topic - that's for AnalysisAgent only
         .with_memory(sliding_window_memory)
         .build()
         .await?;
 
-    println!("🔍 DoctorAgent subscribed to topics: ['user_messages', 'analysis_response']");
+    println!("🔍 DoctorAgent subscribed to topics: ['user_messages', 'analysis_response', 'camera_response']");
     println!("🔍 DoctorAgent processes user messages from 'user_messages' topic (no loops)");
     println!("🔍 DoctorAgent receives analysis results from 'analysis_response' topic");
+    println!("🔍 DoctorAgent receives camera analysis results from 'camera_response' topic");
 
     // Create environment and set up event handling
     let mut environment = Environment::new(None);
